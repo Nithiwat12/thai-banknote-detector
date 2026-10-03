@@ -1,8 +1,4 @@
-"""Tiny local HTTP endpoint: browser posts a JPEG, gets boxes + Thai speech text back.
 
-Runs in a background thread of the Streamlit process so the camera loop never waits
-for a Streamlit rerun. One request at a time per client (the browser awaits each reply).
-"""
 import json
 import threading
 import time
