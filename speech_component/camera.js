@@ -6,7 +6,8 @@ const cameraStatus=document.getElementById('camera-status');
 const overlay=document.getElementById('camera-overlay');
 const toggle=document.getElementById('camera-toggle');
 const capture=document.createElement('canvas');
-let port=null,conf=.4,cameraReset=null,cameraStream=null,cameraWanted=false,openToken=0;
+let port=null,conf=.6,cameraReset=null,cameraStream=null,cameraWanted=false,openToken=0;
+let streamId='',pendingText='',pendingSince=0;
 let lastText='',lastAnnounce=0,lastSeen=0,relaySeq=0,relayPending=null;
 function blobToB64(blob){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(blob);});}
 // Fallback when the local detector port is unreachable (e.g. Streamlit Cloud): send the frame
@@ -14,7 +15,7 @@ function blobToB64(blob){return new Promise((res,rej)=>{const r=new FileReader()
 async function relayDetect(blob){
   const jpeg=await blobToB64(blob),seq=++relaySeq;
   const reply=new Promise((res,rej)=>{relayPending={seq,res};setTimeout(()=>{if(relayPending&&relayPending.seq===seq){relayPending=null;rej(new Error('หมดเวลารอผล'));}},20000);});
-  cameraPost('streamlit:setComponentValue',{value:{reset_id:cameraReset,seq,jpeg},dataType:'json'});
+  cameraPost('streamlit:setComponentValue',{value:{reset_id:cameraReset,stream:streamId,seq,jpeg},dataType:'json'});
   return reply;
 }
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -24,7 +25,7 @@ function clearOverlay(){overlay.getContext('2d').clearRect(0,0,overlay.width,ove
 function stopCamera(){
   openToken++;
   if(cameraStream)cameraStream.getTracks().forEach(t=>t.stop());
-  cameraStream=null;cameraVideo.srcObject=null;clearOverlay();lastText='';
+  cameraStream=null;cameraVideo.srcObject=null;clearOverlay();lastText='';pendingText='';
 }
 function drawBoxes(list){
   overlay.width=cameraVideo.videoWidth;overlay.height=cameraVideo.videoHeight;
@@ -39,8 +40,10 @@ function announce(text){
   const now=performance.now();
   if(text){
     lastSeen=now;
+    if(text!==pendingText){pendingText=text;pendingSince=now;}
+    if(now-pendingSince<250)return;
     if(text!==lastText&&now-lastAnnounce>=1200){lastText=text;lastAnnounce=now;try{window.bankSpeech&&window.bankSpeech.say(text);}catch(e){}}
-  }else if(now-lastSeen>2000)lastText='';
+  }else{pendingText='';if(now-lastSeen>2000)lastText='';}
 }
 async function loop(token){
   let fails=0,relay=!port;
@@ -54,19 +57,20 @@ async function loop(token){
     capture.width=Math.round(cameraVideo.videoWidth*scale);capture.height=Math.round(cameraVideo.videoHeight*scale);
     capture.getContext('2d').drawImage(cameraVideo,0,0,capture.width,capture.height);
     const blob=await new Promise(r=>capture.toBlob(r,'image/jpeg',.8));
+    const staleTimer=setTimeout(()=>{if(token===openToken)clearOverlay();},700);
     try{
       let j;
       if(relay)j=await relayDetect(blob);
-      else{const res=await fetch(`http://${location.hostname}:${port}/detect?conf=${conf}`,{method:'POST',body:blob});j=await res.json();}
+      else{const ctl=new AbortController();const timer=setTimeout(()=>ctl.abort(),8000);try{const res=await fetch(`http://${location.hostname}:${port}/detect?conf=${conf}&stream=${encodeURIComponent(streamId)}`,{method:'POST',body:blob,signal:ctl.signal});j=await res.json();}finally{clearTimeout(timer);}}
       if(token!==openToken)return;
       if(j.error)throw new Error(j.error);
       fails=0;drawBoxes(j.boxes);announce(j.text);
       cameraStatus.textContent=(j.quality||(j.text?('ตรวจพบ: '+j.text):'กล้องสด • กำลังตรวจจับ ยังไม่พบธนบัตร'))+` • ${j.fps} ภาพ/วินาที`;
     }catch(e){
       if(token!==openToken)return;
-      fails++;cameraStatus.textContent='เชื่อมต่อตัวตรวจจับไม่ได้ ('+e.message+') กำลังลองใหม่...';
+      clearOverlay();pendingText='';fails++;cameraStatus.textContent='เชื่อมต่อตัวตรวจจับไม่ได้ ('+e.message+') กำลังลองใหม่...';
       await sleep(Math.min(3000,500*fails));
-    }
+    }finally{clearTimeout(staleTimer);}
   }
 }
 async function openCamera(){
@@ -77,6 +81,7 @@ async function openCamera(){
     if(!navigator.mediaDevices?.getUserMedia)throw new Error('ต้องเปิดผ่าน http://localhost:8501 หรือ HTTPS');
     const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{width:{ideal:640},height:{ideal:480},frameRate:{ideal:30,max:30},facingMode:'environment'}});
     if(token!==openToken||!cameraWanted){stream.getTracks().forEach(t=>t.stop());return;}
+    streamId=(globalThis.crypto?.randomUUID?.()||`${Date.now()}-${Math.random()}`);
     cameraStream=stream;cameraVideo.srcObject=stream;await cameraVideo.play();
     cameraStatus.textContent='กล้องสด • กำลังตรวจจับ...';cameraHeight();
     loop(token);

@@ -13,7 +13,7 @@ import streamlit.components.v1 as components
 from PIL import Image, ImageOps
 from ultralytics import YOLO
 from stability import (Detection, DENOMINATIONS, Stabilizer, AnnouncementGate,
-                       deduplicate, signature, speech_text, count_signature, count_speech_text)
+                       deduplicate, signature, speech_text, count_signature, count_speech_text, ConfirmedFilter)
 from media import Video, frame_is_usable, InferenceWorker
 from detect_server import make_detector, start_server, build_response
 
@@ -42,7 +42,7 @@ class Session:
         self.worker=None;self.source=None;self.temp=None;self.image=None;self.status='พร้อมใช้งาน'
         self.rows=[];self.current='';self.event='';self.sequence=0;self.quality=''
         self.camera_boxes=[];self.reset_id=0;self.relay=None;self.relay_seq=0;self.token=uuid.uuid4().hex;self.last_frame=-1;self.fps=0.
-        self.stabilizer=Stabilizer();self.gate=AnnouncementGate()
+        self.stabilizer=Stabilizer();self.gate=AnnouncementGate();self.camera_filter=ConfirmedFilter();self.stream_id=None
     def reset(self,bump=True):
         if bump:self.reset_id+=1
         self.camera_boxes=[]
@@ -51,7 +51,7 @@ class Session:
         self.source=None
         if self.temp is not None:self.temp.cleanup();self.temp=None
         self.relay=None;self.relay_seq=0;self.image=None;self.rows=[];self.current='';self.event='';self.sequence+=1;self.quality=''
-        self.last_frame=-1;self.fps=0.;self.stabilizer=Stabilizer();self.gate=AnnouncementGate()
+        self.last_frame=-1;self.fps=0.;self.stabilizer=Stabilizer();self.gate=AnnouncementGate();self.camera_filter=ConfirmedFilter();self.stream_id=None
     def __del__(self):
         try:self.reset()
         except Exception:pass
@@ -70,6 +70,8 @@ except Exception as exc:
     st.stop()
 
 conf=st.slider('ความมั่นใจขั้นต่ำ',.20,.90,.40,.05)
+camera_conf=max(.60,conf)
+st.caption('กล้องสด: ความมั่นใจอย่างน้อย 60% และยืนยัน 4 เฟรมก่อนแสดงกรอบ/นับ/พูด')
 imgsz=640
 device=0 if torch.cuda.is_available() else 'cpu'
 # Changing confidence applies to the next inference without restarting the camera.
@@ -158,15 +160,18 @@ def live_panel():
             s.current='';s.event='';s.sequence+=1;s.status=error
     session_key=f'{s.token}:{s.reset_id}'
     with speech_box:message=speech(reset_id=session_key,current_text=s.current,event_text=s.event,
-                   sequence=f'{s.token}:{s.sequence}',port=detector_port,conf=float(conf),
+                   sequence=f'{s.token}:{s.sequence}',port=detector_port,conf=float(camera_conf),
                    relay=s.relay,key='thai_speech',default=None)
     # Relay path: the browser could not reach the detector port (e.g. Streamlit Cloud).
     if (isinstance(message,dict) and message.get('reset_id')==session_key and isinstance(message.get('seq'),int)
             and isinstance(message.get('jpeg'),str) and message['seq']!=s.relay_seq and len(message['jpeg'])<2000000):
         s.relay_seq=message['seq']
+        stream_id=message.get('stream')
+        if stream_id!=s.stream_id:
+            s.camera_filter=ConfirmedFilter();s.stream_id=stream_id
         try:
             frame=cv2.imdecode(np.frombuffer(base64.b64decode(message['jpeg'],validate=True),dtype=np.uint8),cv2.IMREAD_COLOR)
-            result=build_response(frame,detect_frame,float(conf)) if frame is not None else {'boxes':[],'text':'','fps':0,'quality':'อ่านภาพกล้องไม่ได้'}
+            result=build_response(frame,detect_frame,float(camera_conf),s.camera_filter) if frame is not None else {'boxes':[],'text':'','fps':0,'quality':'อ่านภาพกล้องไม่ได้'}
         except Exception as exc:
             result={'boxes':[],'text':'','fps':0,'quality':f'ประมวลผลไม่ได้: {exc}'}
         s.relay={'seq':message['seq'],**result}
@@ -187,4 +192,4 @@ def live_panel():
     else:ok_slot.empty()
 
 live_panel()
-st.caption('กรอบเทา: ตรวจพบแล้ว • กรอบเขียว: ยืนยันต่อเนื่อง • พูดทันทีที่ตรวจพบ ไม่ต้องกดปุ่ม | กล้องผ่านเบราว์เซอร์ ใช้ localhost หรือ HTTPS')
+
