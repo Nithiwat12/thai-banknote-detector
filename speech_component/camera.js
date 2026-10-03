@@ -35,11 +35,18 @@ function drawBoxes(list){
     ctx.strokeRect(x1*w,y1*h,(x2-x1)*w,(y2-y1)*h);ctx.fillText(it.label,x1*w+2,Math.max(20,y1*h-6));
   }
 }
-function announce(text){
+// A single misread frame (e.g. 100 seen as 500) must not be spoken. At ~10+ results/second the
+// same wrong answer would otherwise be announced almost immediately, so require the SAME
+// result in several consecutive frames before speaking (fewer when results arrive slowly).
+let candidate='',candidateCount=0;
+function announce(text,need){
   const now=performance.now();
+  if(text===candidate)candidateCount++;else{candidate=text;candidateCount=1;}
   if(text){
-    lastSeen=now;
-    if(text!==lastText&&now-lastAnnounce>=1200){lastText=text;lastAnnounce=now;try{window.bankSpeech&&window.bankSpeech.say(text);}catch(e){}}
+    if(candidateCount>=need){
+      lastSeen=now;
+      if(text!==lastText&&now-lastAnnounce>=1200){lastText=text;lastAnnounce=now;try{window.bankSpeech&&window.bankSpeech.say(text);}catch(e){}}
+    }
   }else if(now-lastSeen>2000)lastText='';
 }
 async function loop(token){
@@ -50,17 +57,18 @@ async function loop(token){
   }
   while(token===openToken&&cameraWanted){
     if(cameraVideo.readyState<2||!cameraVideo.videoWidth){await sleep(100);continue;}
-    const scale=Math.min(1,640/cameraVideo.videoWidth);
+    const maxW=relay?640:960;  // direct mode: send more pixels, the model downsizes with better quality
+    const scale=Math.min(1,maxW/cameraVideo.videoWidth);
     capture.width=Math.round(cameraVideo.videoWidth*scale);capture.height=Math.round(cameraVideo.videoHeight*scale);
     capture.getContext('2d').drawImage(cameraVideo,0,0,capture.width,capture.height);
-    const blob=await new Promise(r=>capture.toBlob(r,'image/jpeg',.8));
+    const blob=await new Promise(r=>capture.toBlob(r,'image/jpeg',relay?.8:.9));
     try{
       let j;
       if(relay)j=await relayDetect(blob);
       else{const res=await fetch(`http://${location.hostname}:${port}/detect?conf=${conf}`,{method:'POST',body:blob});j=await res.json();}
       if(token!==openToken)return;
       if(j.error)throw new Error(j.error);
-      fails=0;drawBoxes(j.boxes);announce(j.text);
+      fails=0;drawBoxes(j.boxes);announce(j.text,relay?2:4);
       cameraStatus.textContent=(j.quality||(j.text?('ตรวจพบ: '+j.text):'กล้องสด • กำลังตรวจจับ ยังไม่พบธนบัตร'))+` • ${j.fps} ภาพ/วินาที`;
     }catch(e){
       if(token!==openToken)return;
@@ -75,7 +83,7 @@ async function openCamera(){
   cameraStatus.textContent='กรุณาอนุญาตกล้องในเบราว์เซอร์';
   try{
     if(!navigator.mediaDevices?.getUserMedia)throw new Error('ต้องเปิดผ่าน http://localhost:8501 หรือ HTTPS');
-    const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{width:{ideal:640},height:{ideal:480},frameRate:{ideal:30,max:30},facingMode:'environment'}});
+    const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{width:{ideal:1280},height:{ideal:720},frameRate:{ideal:30,max:30},facingMode:'environment'}});
     if(token!==openToken||!cameraWanted){stream.getTracks().forEach(t=>t.stop());return;}
     cameraStream=stream;cameraVideo.srcObject=stream;await cameraVideo.play();
     cameraStatus.textContent='กล้องสด • กำลังตรวจจับ...';cameraHeight();

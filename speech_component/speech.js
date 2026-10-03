@@ -13,7 +13,9 @@ function voices(){
   synth.getVoices().filter(v=>v.lang.toLowerCase().replace('_','-').startsWith('th')).forEach(v=>{
     const option=document.createElement('option');option.value=v.voiceURI;option.textContent=v.name;voicesNode.append(option);
   });
+  let saved='';try{saved=localStorage.getItem('thaiVoice')||'';}catch(e){}
   if([...voicesNode.options].some(v=>v.value===old))voicesNode.value=old;
+  else if([...voicesNode.options].some(v=>v.value===saved))voicesNode.value=saved;
   if(!voicesNode.options.length){
     statusNode.textContent='กำลังรอเสียงภาษาไทย หากไม่ปรากฏให้ติดตั้งเสียงไทยแล้วเปิดเบราว์เซอร์ใหม่';
   }else if(!active){
@@ -54,7 +56,7 @@ soundBox.onchange=()=>{
   if(!enabled){cancel();statusNode.textContent='ปิดเสียงประกาศแล้ว';}
   else{voices();speak(current||'เปิดเสียงประกาศแล้ว',true);}
 };
-voicesNode.onchange=()=>{if(enabled)speak(current||'พร้อมตรวจจับธนบัตร',true);};
+voicesNode.onchange=()=>{try{localStorage.setItem('thaiVoice',voicesNode.value);}catch(e){}if(enabled)speak(current||'พร้อมตรวจจับธนบัตร',true);};
 // Called from the camera checkbox click (a user gesture inside this frame).
 function toggleOn(){return document.getElementById('camera-toggle').checked;}
 window.bankSpeech={

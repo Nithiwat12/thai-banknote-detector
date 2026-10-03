@@ -115,7 +115,7 @@ def draw(frame,raw,stable):
                         cv2.FONT_HERSHEY_SIMPLEX,.6,color,2,cv2.LINE_AA)
     return cv2.cvtColor(out,cv2.COLOR_BGR2RGB)
 
-uploaded=st.file_uploader('อัปโหลดรูปภาพหรือวิดีโอ',type=['jpg','jpeg','png','webp','mp4','avi','mov','mkv'])
+uploaded=st.file_uploader('อัปโหลดรูปภาพหรือวิดีโอ',type=['jpg','jpeg','png','webp','mp4','avi','mov','mkv','webm','m4v'])
 start_file=st.button('ตรวจไฟล์ที่อัปโหลด',type='primary',disabled=uploaded is None,use_container_width=True)
 if start_file:
     s.reset()
