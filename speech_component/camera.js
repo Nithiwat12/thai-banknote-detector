@@ -68,7 +68,7 @@ async function loop(token){
       else{const res=await fetch(`http://${location.hostname}:${port}/detect?conf=${conf}`,{method:'POST',body:blob});j=await res.json();}
       if(token!==openToken)return;
       if(j.error)throw new Error(j.error);
-      fails=0;drawBoxes(j.boxes);announce(j.text,relay?2:4);
+      fails=0;drawBoxes(j.boxes);announce(j.text,relay?2:3);
       cameraStatus.textContent=(j.quality||(j.text?('ตรวจพบ: '+j.text):'กล้องสด • กำลังตรวจจับ ยังไม่พบธนบัตร'))+` • ${j.fps} ภาพ/วินาที`;
     }catch(e){
       if(token!==openToken)return;
@@ -96,7 +96,7 @@ async function openCamera(){
 }
 toggle.onchange=()=>{
   cameraWanted=toggle.checked;cameraPanel.hidden=!cameraWanted;
-  if(cameraWanted){try{window.bankSpeech&&window.bankSpeech.unlock('เปิดกล้องแล้ว');}catch(e){}
+  if(cameraWanted){try{window.bankSpeech&&window.bankSpeech.unlock();}catch(e){}
     openCamera();}
   else{stopCamera();window.bankSpeech&&window.bankSpeech.stop();}
   cameraHeight();
