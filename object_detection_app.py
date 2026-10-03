@@ -15,7 +15,7 @@ from ultralytics import YOLO
 from stability import (Detection, DENOMINATIONS, Stabilizer, AnnouncementGate,
                        deduplicate, signature, speech_text, count_signature, count_speech_text)
 from media import Video, frame_is_usable, InferenceWorker
-from detect_server import make_detector, start_server
+from detect_server import make_detector, start_server, build_response
 
 ROOT = Path(__file__).resolve().parent
 MODEL_PATH = Path(os.environ.get('BANKNOTE_MODEL',str(ROOT/'best v26n.pt'))).expanduser()
@@ -41,7 +41,7 @@ class Session:
     def __init__(self):
         self.worker=None;self.source=None;self.temp=None;self.image=None;self.status='พร้อมใช้งาน'
         self.rows=[];self.current='';self.event='';self.sequence=0;self.quality=''
-        self.camera_boxes=[];self.reset_id=0;self.token=uuid.uuid4().hex;self.last_frame=-1;self.fps=0.
+        self.camera_boxes=[];self.reset_id=0;self.relay=None;self.relay_seq=0;self.token=uuid.uuid4().hex;self.last_frame=-1;self.fps=0.
         self.stabilizer=Stabilizer();self.gate=AnnouncementGate()
     def reset(self,bump=True):
         if bump:self.reset_id+=1
@@ -50,7 +50,7 @@ class Session:
         elif self.source is not None:self.source.close()
         self.source=None
         if self.temp is not None:self.temp.cleanup();self.temp=None
-        self.image=None;self.rows=[];self.current='';self.event='';self.sequence+=1;self.quality=''
+        self.relay=None;self.relay_seq=0;self.image=None;self.rows=[];self.current='';self.event='';self.sequence+=1;self.quality=''
         self.last_frame=-1;self.fps=0.;self.stabilizer=Stabilizer();self.gate=AnnouncementGate()
     def __del__(self):
         try:self.reset()
@@ -77,10 +77,13 @@ if s.worker is not None:s.worker.confidence=conf
 
 
 @st.cache_resource
-def get_detector_port(_model,_lock,_values,_device,stamp):
+def get_detector(_model,_lock,_values,_device,stamp):
     # Browser camera frames go straight to this local endpoint (no Streamlit rerun per frame).
-    return start_server(make_detector(_model,_lock,_values,_device))
-detector_port=get_detector_port(model,model_lock,class_values,device,MODEL_PATH.stat().st_mtime_ns)
+    detect=make_detector(_model,_lock,_values,_device)
+    return start_server(detect),detect
+detector_port,detect_frame=get_detector(model,model_lock,class_values,device,MODEL_PATH.stat().st_mtime_ns)
+# BANKNOTE_RELAY=1 forces the slower Streamlit relay path (used automatically when the port is unreachable).
+if os.environ.get('BANKNOTE_RELAY'):detector_port=0
 
 
 def infer(frame, threshold=None):
@@ -154,9 +157,20 @@ def live_panel():
             s.worker.close();s.worker=None;s.source=None
             s.current='';s.event='';s.sequence+=1;s.status=error
     session_key=f'{s.token}:{s.reset_id}'
-    with speech_box:speech(reset_id=session_key,current_text=s.current,event_text=s.event,
+    with speech_box:message=speech(reset_id=session_key,current_text=s.current,event_text=s.event,
                    sequence=f'{s.token}:{s.sequence}',port=detector_port,conf=float(conf),
-                   key='thai_speech',default=None)
+                   relay=s.relay,key='thai_speech',default=None)
+    # Relay path: the browser could not reach the detector port (e.g. Streamlit Cloud).
+    if (isinstance(message,dict) and message.get('reset_id')==session_key and isinstance(message.get('seq'),int)
+            and isinstance(message.get('jpeg'),str) and message['seq']!=s.relay_seq and len(message['jpeg'])<2000000):
+        s.relay_seq=message['seq']
+        try:
+            frame=cv2.imdecode(np.frombuffer(base64.b64decode(message['jpeg'],validate=True),dtype=np.uint8),cv2.IMREAD_COLOR)
+            result=build_response(frame,detect_frame,float(conf)) if frame is not None else {'boxes':[],'text':'','fps':0,'quality':'อ่านภาพกล้องไม่ได้'}
+        except Exception as exc:
+            result={'boxes':[],'text':'','fps':0,'quality':f'ประมวลผลไม่ได้: {exc}'}
+        s.relay={'seq':message['seq'],**result}
+        st.rerun(scope='fragment')
     status_slot.write(s.status)
     if s.quality:warn_slot.warning(s.quality)
     else:warn_slot.empty()

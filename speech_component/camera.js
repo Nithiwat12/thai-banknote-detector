@@ -7,7 +7,16 @@ const overlay=document.getElementById('camera-overlay');
 const toggle=document.getElementById('camera-toggle');
 const capture=document.createElement('canvas');
 let port=null,conf=.4,cameraReset=null,cameraStream=null,cameraWanted=false,openToken=0;
-let lastText='',lastAnnounce=0,lastSeen=0;
+let lastText='',lastAnnounce=0,lastSeen=0,relaySeq=0,relayPending=null;
+function blobToB64(blob){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(blob);});}
+// Fallback when the local detector port is unreachable (e.g. Streamlit Cloud): send the frame
+// through Streamlit itself and wait for the result to come back in the render args.
+async function relayDetect(blob){
+  const jpeg=await blobToB64(blob),seq=++relaySeq;
+  const reply=new Promise((res,rej)=>{relayPending={seq,res};setTimeout(()=>{if(relayPending&&relayPending.seq===seq){relayPending=null;rej(new Error('หมดเวลารอผล'));}},20000);});
+  cameraPost('streamlit:setComponentValue',{value:{reset_id:cameraReset,seq,jpeg},dataType:'json'});
+  return reply;
+}
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function cameraPost(type,extra={}){window.parent.postMessage({isStreamlitMessage:true,type,...extra},'*');}
 function cameraHeight(){cameraPost('streamlit:setFrameHeight',{height:Math.ceil(document.body.scrollHeight+16)});}
@@ -34,16 +43,21 @@ function announce(text){
   }else if(now-lastSeen>2000)lastText='';
 }
 async function loop(token){
-  let fails=0;
+  let fails=0,relay=!port;
+  if(!relay){
+    try{const ctl=new AbortController();setTimeout(()=>ctl.abort(),2500);await fetch(`http://${location.hostname}:${port}/`,{signal:ctl.signal});}
+    catch(e){relay=true;}
+  }
   while(token===openToken&&cameraWanted){
-    if(!port||cameraVideo.readyState<2||!cameraVideo.videoWidth){await sleep(100);continue;}
+    if(cameraVideo.readyState<2||!cameraVideo.videoWidth){await sleep(100);continue;}
     const scale=Math.min(1,640/cameraVideo.videoWidth);
     capture.width=Math.round(cameraVideo.videoWidth*scale);capture.height=Math.round(cameraVideo.videoHeight*scale);
     capture.getContext('2d').drawImage(cameraVideo,0,0,capture.width,capture.height);
     const blob=await new Promise(r=>capture.toBlob(r,'image/jpeg',.8));
     try{
-      const res=await fetch(`http://${location.hostname}:${port}/detect?conf=${conf}`,{method:'POST',body:blob});
-      const j=await res.json();
+      let j;
+      if(relay)j=await relayDetect(blob);
+      else{const res=await fetch(`http://${location.hostname}:${port}/detect?conf=${conf}`,{method:'POST',body:blob});j=await res.json();}
       if(token!==openToken)return;
       if(j.error)throw new Error(j.error);
       fails=0;drawBoxes(j.boxes);announce(j.text);
@@ -83,7 +97,8 @@ cameraVideo.onloadedmetadata=cameraHeight;
 window.addEventListener('message',e=>{
   if(e.source!==window.parent||e.data?.type!=='streamlit:render')return;
   const a=e.data.args||{};
-  if(a.port)port=a.port;
+  port=a.port||null;
+  if(a.relay&&relayPending&&a.relay.seq===relayPending.seq){const p=relayPending;relayPending=null;p.res(a.relay);}
   if(typeof a.conf==='number')conf=a.conf;
   if(cameraReset!==a.reset_id){
     // Server-side reset (file upload started): switch the camera off.

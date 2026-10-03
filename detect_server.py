@@ -31,6 +31,16 @@ def make_detector(model, lock, class_values, device, imgsz=640):
         return deduplicate(ds), 1 / max(time.perf_counter() - t0, 1e-6), ''
     return detect
 
+def build_response(frame, detect, conf):
+    """Run detection on a BGR frame and return the JSON-able result the browser expects."""
+    h, w = frame.shape[:2]
+    ds, fps, quality = detect(frame, conf)
+    return {
+        'boxes': [{'box': [d.box[0]/w, d.box[1]/h, d.box[2]/w, d.box[3]/h],
+                   'label': f'{d.value} THB {d.confidence:.2f}'} for d in ds],
+        'text': count_speech_text(count_signature(ds)),
+        'fps': round(fps, 1), 'quality': quality}
+
 def start_server(detect, host='0.0.0.0'):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a): pass
@@ -60,13 +70,7 @@ def start_server(detect, host='0.0.0.0'):
                 frame = cv2.imdecode(np.frombuffer(self.rfile.read(n), np.uint8), cv2.IMREAD_COLOR)
                 if frame is None:
                     return self._json(400, {'error': 'bad image'})
-                h, w = frame.shape[:2]
-                ds, fps, quality = detect(frame, conf)
-                self._json(200, {
-                    'boxes': [{'box': [d.box[0]/w, d.box[1]/h, d.box[2]/w, d.box[3]/h],
-                               'label': f'{d.value} THB {d.confidence:.2f}'} for d in ds],
-                    'text': count_speech_text(count_signature(ds)),
-                    'fps': round(fps, 1), 'quality': quality})
+                self._json(200, build_response(frame, detect, conf))
             except Exception as exc:
                 self._json(500, {'error': str(exc)})
     server = ThreadingHTTPServer((host, 0), Handler)
