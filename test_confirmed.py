@@ -1,6 +1,6 @@
 import unittest
 from stability import Detection,ConfirmedFilter,filter_candidates
-<<<<<<< HEAD
+
 
 SHAPE=(480,640,3)
 def d(value=100,confidence=.9,box=(100,100,300,250)):
@@ -49,7 +49,7 @@ class ConfirmationTests(unittest.TestCase):
         for i in range(5):f.update([d()],SHAPE,.6,i*.15)
         self.assertFalse(f.update([d()],SHAPE,.6,5)[0])
 
-=======
+
 class CameraTests(unittest.TestCase):
     def test_full_frame_false_positive_rejected(self):
         self.assertEqual(filter_candidates([Detection((0,0,640,480),20,.79)],(480,640),.6),[])
@@ -67,5 +67,5 @@ class CameraTests(unittest.TestCase):
     def test_real_overlap_not_removed(self):
         ds=[Detection((50,50,250,200),100,.9),Detection((150,80,350,240),500,.9)]
         self.assertEqual(len(filter_candidates(ds,(480,640),.6)),2)
->>>>>>> c5daf94 (Update detect_server.py)
+
 if __name__=='__main__':unittest.main()

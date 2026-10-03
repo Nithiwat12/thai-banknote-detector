@@ -71,11 +71,7 @@ except Exception as exc:
 
 conf=st.slider('ความมั่นใจขั้นต่ำ',.20,.90,.40,.05)
 camera_conf=max(.60,conf)
-<<<<<<< HEAD
-st.caption('กล้องสด: ความมั่นใจอย่างน้อย 60% และยืนยัน 4 เฟรมก่อนแสดงกรอบ/นับ/พูด')
-=======
-st.caption('กล้องสด: ความมั่นใจอย่างน้อย 60% ตรวจทันที ไม่รอหลายเฟรม และตัดกรอบที่ครอบเกือบเต็มภาพ')
->>>>>>> c5daf94 (Update detect_server.py)
+
 imgsz=640
 device=0 if torch.cuda.is_available() else 'cpu'
 # Changing confidence applies to the next inference without restarting the camera.
