@@ -44,7 +44,7 @@ class Session:
     def __init__(self):
         self.worker=None;self.source=None;self.temp=None;self.image=None;self.status='พร้อมใช้งาน'
         self.rows=[];self.current='';self.event='';self.sequence=0;self.quality=''
-        self.camera_boxes=[];self.reset_id=0;self.video=None;self.relay=None;self.relay_seq=0;self.token=uuid.uuid4().hex;self.last_frame=-1;self.fps=0.
+        self.camera_boxes=[];self.reset_id=0;self.video=None;self.video_events=[];self.video_id=0;self.relay=None;self.relay_seq=0;self.token=uuid.uuid4().hex;self.last_frame=-1;self.fps=0.
         self.stabilizer=Stabilizer();self.gate=AnnouncementGate()
     def reset(self,bump=True):
         if bump:self.reset_id+=1
@@ -53,7 +53,7 @@ class Session:
         elif self.source is not None:self.source.close()
         self.source=None
         if self.temp is not None:self.temp.cleanup();self.temp=None
-        self.video=None;self.relay=None;self.relay_seq=0;self.image=None;self.rows=[];self.current='';self.event='';self.sequence+=1;self.quality=''
+        self.video=None;self.video_events=[];self.relay=None;self.relay_seq=0;self.image=None;self.rows=[];self.current='';self.event='';self.sequence+=1;self.quality=''
         self.last_frame=-1;self.fps=0.;self.stabilizer=Stabilizer();self.gate=AnnouncementGate()
     def __del__(self):
         try:self.reset()
@@ -133,6 +133,9 @@ def process_video(uploaded):
     out=Path(s.temp.name)/'result.mp4'
     bar=st.progress(0.,text='กำลังตรวจวิดีโอ...')
     writer=None;last=[];signatures=Counter();idx=0;max_frames=1800
+    # Speech events {t: seconds into the video, text}: the browser speaks them while the video plays.
+    events=[];recent=[];last_text='';last_seen=-9.;last_event=-9.
+    window=7 if stride==1 else 3;need=3 if stride==1 else 2   # smooth over recent frames so one misread frame is not spoken
     try:
         while idx<max_frames:
             ok,frame=cap.read()
@@ -145,6 +148,13 @@ def process_video(uploaded):
                 frame,ds,s.fps,s.quality=infer(frame,conf)
                 if ds:last=ds;signatures[count_signature(ds)]+=1
                 else:last=[]
+                t=idx/fps;recent.append(count_signature(ds) if ds else ());recent=recent[-window:]
+                sig,votes=Counter(recent).most_common(1)[0]
+                if sig and votes>=need:
+                    last_seen=t;text=count_speech_text(sig)
+                    if text!=last_text and t-last_event>=1.2:   # too soon after the last announcement: try again later
+                        last_event=t;events.append({'t':round(t,2),'text':text});last_text=text
+                elif not sig and t-last_seen>1.5:last_text=''
             if writer is None:
                 writer=imageio_ffmpeg.write_frames(str(out),(w,h),fps=fps,codec='libx264',pix_fmt_in='rgb24',
                                                    pix_fmt_out='yuv420p',macro_block_size=1,quality=6,
@@ -157,12 +167,12 @@ def process_video(uploaded):
         if writer is not None:writer.close()
         bar.empty()
     if idx==0 or not out.is_file():raise RuntimeError('อ่านเฟรมจากวิดีโอไม่ได้')
-    s.video=out.read_bytes()
+    s.video=out.read_bytes();s.video_events=events;s.video_id+=1
     if signatures:
         best=signatures.most_common(1)[0][0]   # most frequent result across the video
         s.rows=[{'ชนิด (บาท)':value,'ความมั่นใจ':0.} for value,count in best for _ in range(count)]
-        s.current=count_speech_text(best);s.event=s.current;s.sequence+=1
-        s.status=f'ตรวจวิดีโอเสร็จ ({idx} เฟรม) กดเล่นวิดีโอเพื่อดูกรอบ'
+        s.current=count_speech_text(best)
+        s.status=f'ตรวจวิดีโอเสร็จ ({idx} เฟรม) กดเล่นวิดีโอ ระบบจะพูดตามที่ตรวจพบ'
     else:s.status=f'ตรวจวิดีโอเสร็จ ({idx} เฟรม) ไม่พบธนบัตรที่ผ่านเกณฑ์'
 
 uploaded=st.file_uploader('อัปโหลดรูปภาพหรือวิดีโอ',type=['jpg','jpeg','png','webp','mp4','avi','mov','mkv','webm','m4v'])
@@ -206,7 +216,7 @@ def live_panel():
     session_key=f'{s.token}:{s.reset_id}'
     with speech_box:message=speech(reset_id=session_key,current_text=s.current,event_text=s.event,
                    sequence=f'{s.token}:{s.sequence}',port=detector_port,conf=float(conf),
-                   relay=s.relay,key='thai_speech',default=None)
+                   relay=s.relay,video_events=s.video_events,video_id=f'{s.token}:{s.video_id}',key='thai_speech',default=None)
     # Relay path: the browser could not reach the detector port (e.g. Streamlit Cloud).
     if (isinstance(message,dict) and message.get('reset_id')==session_key and isinstance(message.get('seq'),int)
             and isinstance(message.get('jpeg'),str) and message['seq']!=s.relay_seq and len(message['jpeg'])<2000000):

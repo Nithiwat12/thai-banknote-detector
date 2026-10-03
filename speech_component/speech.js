@@ -64,9 +64,32 @@ window.bankSpeech={
   unlock(text){enabled=soundBox.checked;if(enabled){voices();speak(text,true);}},
   stop(){cancel();statusNode.textContent='ปิดกล้องแล้ว';}
 };
+// ---- Uploaded video: speak the detections while the video plays, in sync with its timeline ----
+let videoEvents=[],videoId=null,boundVideo=null,lastEventIdx=-1;const boundSet=new WeakSet();
+function eventIndexAt(time){let i=-1;for(let k=0;k<videoEvents.length;k++){if(videoEvents[k].t<=time)i=k;else break;}return i;}
+function findVideo(){
+  try{const list=window.parent.document.querySelectorAll('video');return list.length?list[list.length-1]:null;}catch(e){return null;}
+}
+function syncVideo(){
+  const v=findVideo();
+  if(v!==boundVideo){
+    boundVideo=v;lastEventIdx=v?eventIndexAt(v.currentTime):-1;
+    if(v&&!boundSet.has(v)){boundSet.add(v);
+      v.addEventListener('pause',()=>cancel());
+      v.addEventListener('seeked',()=>{lastEventIdx=eventIndexAt(v.currentTime);if(!v.paused&&lastEventIdx>=0)speak(videoEvents[lastEventIdx].text,true);});
+      v.addEventListener('play',()=>{if(v.currentTime<.05)lastEventIdx=-1;});
+    }
+  }
+  if(!v||v.paused||v.ended||!videoEvents.length||toggleOn())return;
+  const idx=eventIndexAt(v.currentTime);
+  if(idx>lastEventIdx){lastEventIdx=idx;speak(videoEvents[idx].text);}   // newest passed event only
+  else if(idx<lastEventIdx)lastEventIdx=idx;                              // video looped / rewound
+}
+setInterval(syncVideo,100);
 window.addEventListener('message',e=>{
   if(e.source!==window.parent||e.data?.type!=='streamlit:render')return;
   const a=e.data.args||{};lastRender=Date.now();
+  if(Array.isArray(a.video_events)){videoEvents=a.video_events;if(videoId!==a.video_id){videoId=a.video_id;lastEventIdx=-1;boundVideo=null;cancel();}}
   if(resetId!==a.reset_id){resetId=a.reset_id;cancel();lastSeq=null;}
   current=a.current_text||'';
   if(!current&&!toggleOn())pending='';
