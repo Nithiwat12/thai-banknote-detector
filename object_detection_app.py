@@ -5,6 +5,9 @@ import tempfile
 import threading
 import time
 import uuid
+import math
+from collections import Counter
+import imageio_ffmpeg
 import torch
 import cv2
 import numpy as np
@@ -41,7 +44,7 @@ class Session:
     def __init__(self):
         self.worker=None;self.source=None;self.temp=None;self.image=None;self.status='พร้อมใช้งาน'
         self.rows=[];self.current='';self.event='';self.sequence=0;self.quality=''
-        self.camera_boxes=[];self.reset_id=0;self.relay=None;self.relay_seq=0;self.token=uuid.uuid4().hex;self.last_frame=-1;self.fps=0.
+        self.camera_boxes=[];self.reset_id=0;self.video=None;self.relay=None;self.relay_seq=0;self.token=uuid.uuid4().hex;self.last_frame=-1;self.fps=0.
         self.stabilizer=Stabilizer();self.gate=AnnouncementGate()
     def reset(self,bump=True):
         if bump:self.reset_id+=1
@@ -50,7 +53,7 @@ class Session:
         elif self.source is not None:self.source.close()
         self.source=None
         if self.temp is not None:self.temp.cleanup();self.temp=None
-        self.relay=None;self.relay_seq=0;self.image=None;self.rows=[];self.current='';self.event='';self.sequence+=1;self.quality=''
+        self.video=None;self.relay=None;self.relay_seq=0;self.image=None;self.rows=[];self.current='';self.event='';self.sequence+=1;self.quality=''
         self.last_frame=-1;self.fps=0.;self.stabilizer=Stabilizer();self.gate=AnnouncementGate()
     def __del__(self):
         try:self.reset()
@@ -115,6 +118,53 @@ def draw(frame,raw,stable):
                         cv2.FONT_HERSHEY_SIMPLEX,.6,color,2,cv2.LINE_AA)
     return cv2.cvtColor(out,cv2.COLOR_BGR2RGB)
 
+def process_video(uploaded):
+    """Detect on the whole uploaded video, then render a playable MP4 with the boxes drawn on it.
+    (Showing frames one by one with st.image flickers and cannot be played back.)"""
+    s.temp=tempfile.TemporaryDirectory(prefix='banknote_')
+    src=Path(s.temp.name)/('input'+Path(uploaded.name).suffix.lower())
+    src.write_bytes(uploaded.getbuffer())
+    cap=cv2.VideoCapture(str(src))
+    if not cap.isOpened():
+        cap.release();raise RuntimeError('อ่านวิดีโอไม่ได้ ลองไฟล์ MP4 (H.264)')
+    total=int(cap.get(cv2.CAP_PROP_FRAME_COUNT));fps=cap.get(cv2.CAP_PROP_FPS)
+    if not (0<fps<=120):fps=25.
+    stride=max(1,math.ceil(total/600)) if total>0 else 1   # at most ~600 frames are run through the model
+    out=Path(s.temp.name)/'result.mp4'
+    bar=st.progress(0.,text='กำลังตรวจวิดีโอ...')
+    writer=None;last=[];signatures=Counter();idx=0;max_frames=1800
+    try:
+        while idx<max_frames:
+            ok,frame=cap.read()
+            if not ok:break
+            h,w=frame.shape[:2]
+            if max(h,w)>1280:
+                k=1280/max(h,w);frame=cv2.resize(frame,(round(w*k),round(h*k)))
+            h,w=frame.shape[0]//2*2,frame.shape[1]//2*2;frame=frame[:h,:w]
+            if idx%stride==0:
+                frame,ds,s.fps,s.quality=infer(frame,conf)
+                if ds:last=ds;signatures[count_signature(ds)]+=1
+                else:last=[]
+            if writer is None:
+                writer=imageio_ffmpeg.write_frames(str(out),(w,h),fps=fps,codec='libx264',pix_fmt_in='rgb24',
+                                                   pix_fmt_out='yuv420p',macro_block_size=1,quality=6,
+                                                   output_params=['-movflags','+faststart']);writer.send(None)
+            writer.send(np.ascontiguousarray(draw(frame,[],last)).tobytes())
+            idx+=1
+            if idx%5==0:bar.progress(min(.99,idx/(total if total>0 else 300)),text=f'กำลังตรวจวิดีโอ... {idx} เฟรม')
+    finally:
+        cap.release()
+        if writer is not None:writer.close()
+        bar.empty()
+    if idx==0 or not out.is_file():raise RuntimeError('อ่านเฟรมจากวิดีโอไม่ได้')
+    s.video=out.read_bytes()
+    if signatures:
+        best=signatures.most_common(1)[0][0]   # most frequent result across the video
+        s.rows=[{'ชนิด (บาท)':value,'ความมั่นใจ':0.} for value,count in best for _ in range(count)]
+        s.current=count_speech_text(best);s.event=s.current;s.sequence+=1
+        s.status=f'ตรวจวิดีโอเสร็จ ({idx} เฟรม) กดเล่นวิดีโอเพื่อดูกรอบ'
+    else:s.status=f'ตรวจวิดีโอเสร็จ ({idx} เฟรม) ไม่พบธนบัตรที่ผ่านเกณฑ์'
+
 uploaded=st.file_uploader('อัปโหลดรูปภาพหรือวิดีโอ',type=['jpg','jpeg','png','webp','mp4','avi','mov','mkv','webm','m4v'])
 start_file=st.button('ตรวจไฟล์ที่อัปโหลด',type='primary',disabled=uploaded is None,use_container_width=True)
 if start_file:
@@ -128,19 +178,16 @@ if start_file:
             s.rows=[{'ชนิด (บาท)':d.value,'ความมั่นใจ':round(d.confidence,3)} for d in ds]
             s.current=count_speech_text(count_signature(ds));s.event=s.current;s.sequence+=1
             s.status='ผลภาพนิ่ง' if ds else 'ไม่พบธนบัตรที่ผ่านเกณฑ์'
-        else:
-            s.temp=tempfile.TemporaryDirectory(prefix='banknote_')
-            path=Path(s.temp.name)/('input'+Path(uploaded.name).suffix.lower())
-            path.write_bytes(uploaded.getbuffer());s.source=Video(path)
-            s.worker=InferenceWorker(s.source,infer,conf);s.status='กำลังตรวจวิดีโอ'
+        else:process_video(uploaded)
     except Exception as exc:s.reset();s.status=f'เริ่มไม่ได้: {exc}'
 
 @st.fragment(run_every=.1 if s.worker is not None else None)
 def live_panel():
     # Fixed layout: every element below always exists (empty slots when unused). A layout that
     # changes size between reruns makes Streamlit's frontend fail with "Bad delta path index".
-    can_stop=s.worker is not None or s.image is not None
-    if st.button('หยุด / ล้างผล',key='stop',disabled=not can_stop):s.reset();s.status='หยุดแล้ว'
+    can_stop=s.worker is not None or s.image is not None or s.video is not None
+    if st.button('หยุด / ล้างผล',key='stop',disabled=not can_stop):
+        s.reset();s.status='หยุดแล้ว';st.rerun()  # full rerun so the video above is cleared too
     speech_box=st.container()
     status_slot,warn_slot,image_slot,fps_slot,table_slot,ok_slot=(st.empty() for _ in range(6))
     if s.worker is not None:
@@ -186,5 +233,6 @@ def live_panel():
     if s.current:ok_slot.success(s.current)
     else:ok_slot.empty()
 
+if s.video is not None:st.video(s.video,format='video/mp4')
 live_panel()
 st.caption('กรอบเทา: ตรวจพบแล้ว • กรอบเขียว: ยืนยันต่อเนื่อง • พูดทันทีที่ตรวจพบ ไม่ต้องกดปุ่ม | กล้องผ่านเบราว์เซอร์ ใช้ localhost หรือ HTTPS')
