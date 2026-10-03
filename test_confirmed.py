@@ -1,5 +1,6 @@
 import unittest
 from stability import Detection,ConfirmedFilter,filter_candidates
+<<<<<<< HEAD
 
 SHAPE=(480,640,3)
 def d(value=100,confidence=.9,box=(100,100,300,250)):
@@ -48,4 +49,23 @@ class ConfirmationTests(unittest.TestCase):
         for i in range(5):f.update([d()],SHAPE,.6,i*.15)
         self.assertFalse(f.update([d()],SHAPE,.6,5)[0])
 
+=======
+class CameraTests(unittest.TestCase):
+    def test_full_frame_false_positive_rejected(self):
+        self.assertEqual(filter_candidates([Detection((0,0,640,480),20,.79)],(480,640),.6),[])
+    def test_near_full_frame_rejected(self):
+        self.assertEqual(filter_candidates([Detection((4,4,636,478),20,.99)],(480,640),.6),[])
+    def test_note_immediately_counted_and_spoken(self):
+        f=ConfirmedFilter();ds=[Detection((140,80,300,410),50,.8)]
+        boxes,counts,event=f.update(ds,(480,640),.6,0)
+        self.assertEqual(len(boxes),1);self.assertEqual(counts,((50,1),));self.assertIn('1 ใบ',event)
+        self.assertIsNone(f.update(ds,(480,640),.6,.1)[2])
+        self.assertEqual(f.update([],(480,640),.6,.2)[0],[])
+    def test_false_scene_and_real_note(self):
+        ds=[Detection((0,0,640,480),20,.99),Detection((140,80,300,410),50,.8)]
+        self.assertEqual([d.value for d in filter_candidates(ds,(480,640),.6)],[50])
+    def test_real_overlap_not_removed(self):
+        ds=[Detection((50,50,250,200),100,.9),Detection((150,80,350,240),500,.9)]
+        self.assertEqual(len(filter_candidates(ds,(480,640),.6)),2)
+>>>>>>> c5daf94 (Update detect_server.py)
 if __name__=='__main__':unittest.main()

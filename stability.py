@@ -129,6 +129,12 @@ def filter_candidates(detections, shape, confidence):
         box=(max(0.,x1),max(0.,y1),min(float(w),x2),min(float(h),y2))
         bw,bh=box[2]-box[0],box[3]-box[1]
         if bw<=0 or bh<=0 or bw*bh/(w*h)<.003 or min(bw/w,bh/h)<.015:continue
+<<<<<<< HEAD
+=======
+        # Reject scene-sized boxes, including the near-full-frame 20 THB false
+        # detection reported by the user. A note held too close can also fail.
+        if bw*bh/(w*h)>=.85 or (bw/w>=.95 and bh/h>=.90):continue
+>>>>>>> c5daf94 (Update detect_server.py)
         valid.append(Detection(box,d.value,d.confidence))
     rejected=set()
     for i,a in enumerate(valid):
@@ -141,17 +147,25 @@ def filter_candidates(detections, shape, confidence):
 
 
 class ConfirmedFilter:
+<<<<<<< HEAD
     """Per-stream temporal state; never return missing or unconfirmed objects."""
     def __init__(self):
         self.settings=None
         self.tracker=Stabilizer(min_hits=4,min_seconds=.35,max_gap=3.)
         self.gate=AnnouncementGate(cooldown=1.5,hold=.25,formatter=count_speech_text)
+=======
+    """Legacy import name; spatial filtering immediately, no frame confirmation."""
+    def __init__(self):
+        self.settings=None
+        self.gate=AnnouncementGate(cooldown=0.,hold=0.,formatter=count_speech_text)
+>>>>>>> c5daf94 (Update detect_server.py)
 
     def update(self,detections,shape,confidence,now):
         settings=(tuple(shape[:2]),float(confidence))
         if settings!=self.settings:
             self.__init__();self.settings=settings
         candidates=filter_candidates(detections,shape,confidence)
+<<<<<<< HEAD
         stable=self.tracker.update(candidates,now)
         # Require the most recent three observed classes to agree as well as
         # the four-vote/75% rule, preventing immediate switches between classes.
@@ -160,3 +174,7 @@ class ConfirmedFilter:
         stable=[d for d in stable if any(t.box==d.box and t.current.value==d.value for t in eligible)]
         values=count_signature(stable)
         return stable,values,self.gate.update(values,now)
+=======
+        values=count_signature(candidates)
+        return candidates,values,self.gate.update(values,now)
+>>>>>>> c5daf94 (Update detect_server.py)

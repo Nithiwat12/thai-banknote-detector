@@ -8,7 +8,11 @@ const toggle=document.getElementById('camera-toggle');
 const capture=document.createElement('canvas');
 let port=null,conf=.6,cameraReset=null,cameraStream=null,cameraWanted=false,openToken=0;
 let streamId='',pendingText='',pendingSince=0;
+<<<<<<< HEAD
 let lastText='',lastAnnounce=0,lastSeen=0,relaySeq=0,relayPending=null;
+=======
+let lastText='',lastAnnounce=-Infinity,lastSeen=0,relaySeq=0,relayPending=null;
+>>>>>>> c5daf94 (Update detect_server.py)
 function blobToB64(blob){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(blob);});}
 // Fallback when the local detector port is unreachable (e.g. Streamlit Cloud): send the frame
 // through Streamlit itself and wait for the result to come back in the render args.
@@ -25,7 +29,11 @@ function clearOverlay(){overlay.getContext('2d').clearRect(0,0,overlay.width,ove
 function stopCamera(){
   openToken++;
   if(cameraStream)cameraStream.getTracks().forEach(t=>t.stop());
+<<<<<<< HEAD
   cameraStream=null;cameraVideo.srcObject=null;clearOverlay();lastText='';pendingText='';
+=======
+  cameraStream=null;cameraVideo.srcObject=null;clearOverlay();lastText='';pendingText='';lastAnnounce=-Infinity;
+>>>>>>> c5daf94 (Update detect_server.py)
 }
 function drawBoxes(list){
   overlay.width=cameraVideo.videoWidth;overlay.height=cameraVideo.videoHeight;
@@ -41,8 +49,12 @@ function announce(text){
   if(text){
     lastSeen=now;
     if(text!==pendingText){pendingText=text;pendingSince=now;}
+<<<<<<< HEAD
     if(now-pendingSince<250)return;
     if(text!==lastText&&now-lastAnnounce>=1200){lastText=text;lastAnnounce=now;try{window.bankSpeech&&window.bankSpeech.say(text);}catch(e){}}
+=======
+    if(text!==lastText){lastText=text;lastAnnounce=now;try{window.bankSpeech&&window.bankSpeech.say(text);}catch(e){}}
+>>>>>>> c5daf94 (Update detect_server.py)
   }else{pendingText='';if(now-lastSeen>2000)lastText='';}
 }
 async function loop(token){
